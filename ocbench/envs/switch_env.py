@@ -138,6 +138,8 @@ class SwitchEnv(ManipulationEnv):
                         if hasattr(item, 'name') and item.name is not None and item.name.endswith('_0'):
                             item.name = item.name[:-2] + f'_{i * self._num_cols + j}'
                 arena_mjcf.include_copy(button_mjcf)
+                # Exclude button-base/floor collisions.
+                arena_mjcf.contact.add('exclude', body1='world', body2=f'buttonbox_{i * self._num_cols + j}')
 
         # Add cameras.
         cameras = {
