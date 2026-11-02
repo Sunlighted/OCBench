@@ -31,7 +31,7 @@ python hier_bc.py --num_shards=0 --delete_shards=1 --offline_steps=2000000 ...
 
 | 任务 | 平坦 BC | 分层 BC | 论文 BC |
 |---|---|---|---|
-| block-quadruple-task1 | 进行中 | 36.4 / 78.0 / 89.0 ¹ | 0 |
+| block-quadruple-task1 | 0.0 / 0.0 / 0.0 | 36.4 / 78.0 / 89.0 ¹ | 0 |
 | block-quadruple-task2 | 0.0 / 0.0 / 0.0 | 10.2 / 23.2 / 32.8 | 3 |
 | block-quadruple-task3 | 0.0 / 0.2 / 0.2 | 21.2 / 49.0 / 64.0 | 2 |
 | block-triple-task1 | 0.2 / 1.0 / 4.6 | 63.0 / 90.2 / 95.2 | 1 |
