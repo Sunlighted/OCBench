@@ -1,0 +1,32 @@
+{
+ "x1": {
+  "success": 0.0,
+  "success_se": 0.0,
+  "episode_length": 5500.0,
+  "success_length_median": -1.0,
+  "subgoals_done_per_ep": 0.0,
+  "timeouts_per_ep": 0.0,
+  "eval_time": 377.66293811798096,
+  "max_episode_steps": 5500
+ },
+ "x2": {
+  "success": 0.0,
+  "success_se": 0.0,
+  "episode_length": 11000.0,
+  "success_length_median": -1.0,
+  "subgoals_done_per_ep": 0.0,
+  "timeouts_per_ep": 0.0,
+  "eval_time": 718.9079067707062,
+  "max_episode_steps": 11000
+ },
+ "x4": {
+  "success": 0.016,
+  "success_se": 0.005617036781471955,
+  "episode_length": 21906.914,
+  "success_length_median": 15148.5,
+  "subgoals_done_per_ep": 0.0,
+  "timeouts_per_ep": 0.0,
+  "eval_time": 1361.6127972602844,
+  "max_episode_steps": 22000
+ }
+}

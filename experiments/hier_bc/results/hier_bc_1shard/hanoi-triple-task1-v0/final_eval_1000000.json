@@ -1,0 +1,47 @@
+{
+ "x1": {
+  "success": 0.016,
+  "success_se": 0.005617036781471955,
+  "episode_length": 6269.604,
+  "success_length_median": 5997.0,
+  "subgoals_done_per_ep": 1.648,
+  "timeouts_per_ep": 2.004,
+  "done_steps_median": 800.0,
+  "done_steps_p90": 1150.0,
+  "timeout_success_now": 0.00499001996007984,
+  "task/hanoi/done_rate": 0.45125958378970427,
+  "task/hanoi/done_steps_median": 800.0,
+  "eval_time": 484.55428981781006,
+  "max_episode_steps": 7000
+ },
+ "x2": {
+  "success": 0.016,
+  "success_se": 0.005617036781471955,
+  "episode_length": 11744.182,
+  "success_length_median": 5997.0,
+  "subgoals_done_per_ep": 1.648,
+  "timeouts_per_ep": 5.044,
+  "done_steps_median": 800.0,
+  "done_steps_p90": 1150.0,
+  "timeout_success_now": 0.0019825535289452814,
+  "task/hanoi/done_rate": 0.24626419605499103,
+  "task/hanoi/done_steps_median": 800.0,
+  "eval_time": 931.945570230484,
+  "max_episode_steps": 14000
+ },
+ "x4": {
+  "success": 0.016,
+  "success_se": 0.005617036781471955,
+  "episode_length": 22477.498,
+  "success_length_median": 5997.0,
+  "subgoals_done_per_ep": 1.648,
+  "timeouts_per_ep": 10.678,
+  "done_steps_median": 800.0,
+  "done_steps_p90": 1150.0,
+  "timeout_success_now": 0.0009365049634763064,
+  "task/hanoi/done_rate": 0.1337011195846179,
+  "task/hanoi/done_steps_median": 800.0,
+  "eval_time": 1789.126229763031,
+  "max_episode_steps": 28000
+ }
+}

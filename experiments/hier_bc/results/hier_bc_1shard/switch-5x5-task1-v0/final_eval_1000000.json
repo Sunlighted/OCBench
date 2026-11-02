@@ -1,0 +1,47 @@
+{
+ "x1": {
+  "success": 0.432,
+  "success_se": 0.022175109265613186,
+  "episode_length": 3467.13,
+  "success_length_median": 2780.0,
+  "subgoals_done_per_ep": 8.21,
+  "timeouts_per_ep": 1.686,
+  "done_steps_median": 250.0,
+  "done_steps_p90": 425.0,
+  "timeout_success_now": 0.4033214709371293,
+  "task/button/done_rate": 0.8296281325788197,
+  "task/button/done_steps_median": 250.0,
+  "eval_time": 377.3245711326599,
+  "max_episode_steps": 4000
+ },
+ "x2": {
+  "success": 0.83,
+  "success_se": 0.016815633531393464,
+  "episode_length": 4778.2,
+  "success_length_median": 3913.0,
+  "subgoals_done_per_ep": 10.104,
+  "timeouts_per_ep": 2.986,
+  "done_steps_median": 250.0,
+  "done_steps_p90": 450.0,
+  "timeout_success_now": 0.36771600803750837,
+  "task/button/done_rate": 0.7718869365928189,
+  "task/button/done_steps_median": 250.0,
+  "eval_time": 639.4749963283539,
+  "max_episode_steps": 8000
+ },
+ "x4": {
+  "success": 0.968,
+  "success_se": 0.007878842066230875,
+  "episode_length": 5297.712,
+  "success_length_median": 4280.5,
+  "subgoals_done_per_ep": 10.626,
+  "timeouts_per_ep": 3.594,
+  "done_steps_median": 250.0,
+  "done_steps_p90": 450.0,
+  "timeout_success_now": 0.333889816360601,
+  "task/button/done_rate": 0.7472573839662447,
+  "task/button/done_steps_median": 250.0,
+  "eval_time": 912.8282945156097,
+  "max_episode_steps": 16000
+ }
+}

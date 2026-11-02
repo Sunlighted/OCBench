@@ -1,0 +1,46 @@
+{
+ "success": 0.89,
+ "success_se": 0.01400686919941566,
+ "blocks_at_target": 3.664,
+ "blocks_at_target_ge1": 0.956,
+ "blocks_at_target_ge2": 0.92,
+ "blocks_at_target_ge3": 0.898,
+ "blocks_at_target_ge4": 0.89,
+ "episode_length": 7939.954,
+ "success_length_mean": 6449.386516853932,
+ "subgoals_done_per_ep": 2.666,
+ "timeouts_per_ep": 4.142,
+ "clear_subgoals_per_ep": 0.084,
+ "done_steps_mean": 770.6864216054014,
+ "done_steps_p90": 1150.0,
+ "timeout_diagnostics": {
+  "target_ok": 0.05552873008208595,
+  "effector_ok": 0.34572670207629164,
+  "contact_ok": 0.7339449541284404,
+  "ever_target": 0.0816030902945437,
+  "patterns": {
+   "target=0,eff=0,contact=1": 0.36166103331723803,
+   "target=0,eff=1,contact=1": 0.3423466924191212,
+   "target=0,eff=0,contact=0": 0.23708353452438435,
+   "target=1,eff=0,contact=1": 0.02993722839208112,
+   "target=1,eff=0,contact=0": 0.02559150169000483,
+   "target=0,eff=1,contact=0": 0.003380009657170449
+  },
+  "first_target_step_mean": 1017.4556213017752,
+  "at_target_effector_dist_mean": 0.02434510305722602,
+  "at_target_contact_mean": 0.4263252115474773
+ },
+ "eval_time": 160.6634397506714,
+ "config": {
+  "max_episode_steps": 20000,
+  "max_subgoal_steps": 1250,
+  "done_mode": "orig",
+  "done_hold_checks": 2,
+  "done_target_dist": 0.04,
+  "done_effector_dist": 0.1,
+  "done_contact": 0.5,
+  "restore_step": 500000,
+  "num_episodes": 500,
+  "env_name": "block-quadruple-task1-v0"
+ }
+}

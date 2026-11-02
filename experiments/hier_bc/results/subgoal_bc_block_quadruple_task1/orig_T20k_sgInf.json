@@ -1,0 +1,29 @@
+{
+ "success": 0.894,
+ "success_se": 0.01378070446788779,
+ "blocks_at_target": 3.672,
+ "blocks_at_target_ge1": 0.954,
+ "blocks_at_target_ge2": 0.922,
+ "blocks_at_target_ge3": 0.902,
+ "blocks_at_target_ge4": 0.894,
+ "episode_length": 7760.376,
+ "success_length_mean": 6309.145413870246,
+ "subgoals_done_per_ep": 2.82,
+ "timeouts_per_ep": 0.0,
+ "clear_subgoals_per_ep": 0.028,
+ "done_steps_mean": 1708.9539007092199,
+ "done_steps_p90": 3100.0,
+ "eval_time": 155.25358247756958,
+ "config": {
+  "max_episode_steps": 20000,
+  "max_subgoal_steps": 100000,
+  "done_mode": "orig",
+  "done_hold_checks": 2,
+  "done_target_dist": 0.04,
+  "done_effector_dist": 0.1,
+  "done_contact": 0.5,
+  "restore_step": 500000,
+  "num_episodes": 500,
+  "env_name": "block-quadruple-task1-v0"
+ }
+}
