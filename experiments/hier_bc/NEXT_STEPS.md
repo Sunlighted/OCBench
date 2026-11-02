@@ -9,7 +9,18 @@
 - 任务：block-single、block-double（短时程，便于大量 RL 实验）。
 - 数据变体（同一脚本控制器，逐个打开“人类特征”）：
   干净（`p_mistake=0`、固定快速度、无噪声，≈ planner）→ 加速度差异 → 加动作噪声 → 加犯错与纠正（默认 OCBench 数据）；
-  另加 RL agent 数据（由收敛的 RL 策略 rollout 得到）。需先确认 CPU 控制器 / 采集脚本能调哪些参数。
+  另加 RL agent 数据（由收敛的 RL 策略 rollout 得到）。
+  已实现：`impls/demo_variants.py`（`--traj_noise` 0–1 缩放 primitive 轨迹随机性与方块顺序，`--speed_profile`，`--p_mistake`）。
+  OCBench 默认 = traj_noise 1、speed 0.7–1.5、p_mistake 0.1。BC 只用 50–100 条演示。
+  第一批（每种 100 条成功演示，node5 `~/exp/demos/block-{single,double}-task1/`）：
+
+  | 变体 | traj_noise | speed | p_mistake | single 长度 均值±std（成功率） | double 长度 均值±std（成功率） |
+  |---|---|---|---|---|---|
+  | v0_planner | 0 | 1.0 固定 | 0 | 533±123 (100%) | 1257±214 (97%) |
+  | v1_speed | 0 | 0.7–1.5 | 0 | 575±181 (100%) | 1339±342 (98%) |
+  | v2_traj | 1 | 1.0 固定 | 0 | 622±176 (98%) | 1530±270 (99%) |
+  | v3_traj_speed | 1 | 0.7–1.5 | 0 | 658±217 (97%) | 1553±390 (90%) |
+  | v4_ocbench | 1 | 0.7–1.5 | 0.1 | 657±210 (85%) | 1604±381 (80%) |
 - BC prior：确定性 BC（L2）与 flow BC。
 - 微调方法：
   - 确定性 BC：残差 RL、RLPD（演示放入 buffer）、IBRL。
