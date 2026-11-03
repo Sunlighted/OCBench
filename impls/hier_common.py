@@ -6,6 +6,7 @@ same `_target_info` method that produced the metadata, so training and evaluatio
 """
 
 import multiprocessing as mp
+import pickle
 import time
 from collections import defaultdict
 
@@ -89,6 +90,95 @@ def encode_subgoal(spec, subtask_name, target):
                 vec[:] = [np.cos(yaw), np.sin(yaw)]
         parts.append(vec)
     return np.concatenate(parts)
+
+
+
+# Loading dataset segments as (subgoal-conditioned) training episodes.
+
+
+def select_segments(metadata, spec, flat):
+    """Pick the training segments of one dataset file from its metadata alone.
+
+    Hierarchical: every successful subtask segment, conditioned on its encoded target. Flat: every successful episode,
+    unconditioned (the original BC setup).
+    """
+    episode_starts, starts, lengths, episode_idxs, conds = [], [], [], [], []
+    for episode_idx, episode in enumerate(metadata):
+        episode_starts.append(episode['start'])
+        if flat:
+            if episode['success']:
+                starts.append(episode['start'])
+                lengths.append(episode['length'])
+                episode_idxs.append(episode_idx)
+            continue
+        for segment in episode['segments']:
+            if not segment['subtask_success'] or segment['end'] is None or segment['end'] < segment['start']:
+                continue
+            starts.append(segment['start'])
+            lengths.append(segment['end'] - segment['start'] + 1)
+            episode_idxs.append(episode_idx)
+            conds.append(encode_subgoal(spec, segment['subtask_name'], segment['target']))
+    cond_dim = 0 if flat else subgoal_dim(spec)
+    return dict(
+        episode_starts=np.asarray(episode_starts),
+        starts=np.asarray(starts),
+        lengths=np.asarray(lengths),
+        episode_idxs=np.asarray(episode_idxs),
+        conds=np.stack(conds) if conds else np.zeros((len(starts), cond_dim), np.float32),
+    )
+
+
+def num_rows(selection):
+    """(observations, transitions) that a selection occupies: each segment keeps its observation after the last action."""
+    return int((selection['lengths'] + 1).sum()), int(selection['lengths'].sum())
+
+
+def fill_segments(data, selection, out, obs_pos, act_pos):
+    """Copy the selected segments of a loaded dataset file into the preallocated arrays in `out`."""
+    import ocbench
+
+    offsets, observation_offsets = ocbench.get_episode_offsets(data)
+    assert np.array_equal(offsets[:-1], selection['episode_starts'])
+    starts, lengths, episode_idxs = selection['starts'], selection['lengths'], selection['episode_idxs']
+    obs_starts = observation_offsets[episode_idxs] + starts - offsets[episode_idxs]
+    transition_idxs = np.concatenate([np.arange(s, s + n) for s, n in zip(starts, lengths)])
+    observation_idxs = np.concatenate([np.arange(s, s + n + 1) for s, n in zip(obs_starts, lengths)])
+
+    n_obs, n_act = len(observation_idxs), len(transition_idxs)
+    ob_dim = data['observations'].shape[-1]
+    out['observations'][obs_pos : obs_pos + n_obs, :ob_dim] = data['observations'][observation_idxs]
+    out['observations'][obs_pos : obs_pos + n_obs, ob_dim:] = np.repeat(selection['conds'], lengths + 1, axis=0)
+    out['actions'][act_pos : act_pos + n_act] = data['actions'][transition_idxs]
+    out['terminals'][act_pos + np.cumsum(lengths) - 1] = True
+    return obs_pos + n_obs, act_pos + n_act
+
+
+def allocate(n_obs, n_act, ob_dim, action_dim):
+    return dict(
+        observations=np.empty((n_obs, ob_dim), np.float32),
+        actions=np.empty((n_act, action_dim), np.float32),
+        rewards=np.zeros(n_act, dtype=np.float32),
+        masks=np.ones(n_act, dtype=np.float32),
+        terminals=np.zeros(n_act, dtype=bool),
+        observation_interval=np.asarray(1, dtype=np.int32),
+    )
+
+
+def load_metadata(path):
+    with open(path.removesuffix('.npz') + '-metadata.pkl', 'rb') as f:
+        return pickle.load(f)['episodes']
+
+
+def load_segment_file(path, spec, flat, ob_dim, action_dim, max_segments=0):
+    """Load the training segments of a single dataset file (the validation set, or a local `dataset_path`)."""
+    import ocbench
+
+    selection = select_segments(load_metadata(path), spec, flat)
+    if max_segments > 0:
+        selection = {k: v if k == 'episode_starts' else v[:max_segments] for k, v in selection.items()}
+    out = allocate(*num_rows(selection), ob_dim, action_dim)
+    fill_segments(ocbench.load_dataset([path]), selection, out, 0, 0)
+    return out
 
 
 def make_controller(family, env):

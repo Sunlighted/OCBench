@@ -16,7 +16,19 @@ import numpy as np
 from absl import app, flags
 from ml_collections import config_flags
 
-from hier_common import cpu_env_name, encode_subgoal, env_family, evaluate_parallel, subgoal_dim, subgoal_spec
+from hier_common import (
+    allocate,
+    cpu_env_name,
+    env_family,
+    evaluate_parallel,
+    fill_segments,
+    load_metadata,
+    load_segment_file,
+    num_rows,
+    select_segments,
+    subgoal_dim,
+    subgoal_spec,
+)
 
 # Heavy imports (JAX, agents, environments) live in main(): evaluation workers are spawned processes that re-import
 # this module, and importing JAX in each of them exhausts host memory.
@@ -28,6 +40,8 @@ flags.DEFINE_string('env_name', 'hanoi-triple-task1-v0', 'Environment name.')
 flags.DEFINE_string('dataset_root', None, 'Root directory for downloaded datasets.')
 flags.DEFINE_integer('num_shards', 1, 'Number of training shards to use (0: all).')
 flags.DEFINE_integer('delete_shards', 0, 'Delete each raw training shard after loading it (for full-data runs).')
+flags.DEFINE_string('dataset_path', '', 'Local .npz (with -metadata.pkl) to train on instead of the released data.')
+flags.DEFINE_integer('max_episodes', 0, 'With dataset_path: number of training episodes/segments to use (0: all).')
 flags.DEFINE_integer('flat', 0, 'Train and evaluate the original flat BC (successful episodes, no subgoals).')
 flags.DEFINE_string('save_dir', '../exp/hier_bc', 'Save directory.')
 flags.DEFINE_string('run_name', '', 'Run directory name (default: env name and time).')
@@ -49,89 +63,6 @@ flags.DEFINE_float('done_away_dist', 0.1, 'Effector distance moved after subtask
 flags.DEFINE_float('done_contact', 0.5, 'Max gripper contact to count as released.')
 
 DEFAULT_MAX_SUBGOAL_STEPS = dict(block=1250, chamber=1250, hanoi=1875, switch=600)
-
-
-def select_segments(metadata, spec, flat):
-    """Pick the training segments of one dataset file from its metadata alone.
-
-    Hierarchical: every successful subtask segment, conditioned on its encoded target. Flat: every successful episode,
-    unconditioned (the original BC setup).
-    """
-    episode_starts, starts, lengths, episode_idxs, conds = [], [], [], [], []
-    for episode_idx, episode in enumerate(metadata):
-        episode_starts.append(episode['start'])
-        if flat:
-            if episode['success']:
-                starts.append(episode['start'])
-                lengths.append(episode['length'])
-                episode_idxs.append(episode_idx)
-            continue
-        for segment in episode['segments']:
-            if not segment['subtask_success'] or segment['end'] is None or segment['end'] < segment['start']:
-                continue
-            starts.append(segment['start'])
-            lengths.append(segment['end'] - segment['start'] + 1)
-            episode_idxs.append(episode_idx)
-            conds.append(encode_subgoal(spec, segment['subtask_name'], segment['target']))
-    cond_dim = 0 if flat else subgoal_dim(spec)
-    return dict(
-        episode_starts=np.asarray(episode_starts),
-        starts=np.asarray(starts),
-        lengths=np.asarray(lengths),
-        episode_idxs=np.asarray(episode_idxs),
-        conds=np.stack(conds) if conds else np.zeros((len(starts), cond_dim), np.float32),
-    )
-
-
-def num_rows(selection):
-    """(observations, transitions) that a selection occupies: each segment keeps its observation after the last action."""
-    return int((selection['lengths'] + 1).sum()), int(selection['lengths'].sum())
-
-
-def fill_segments(data, selection, out, obs_pos, act_pos):
-    """Copy the selected segments of a loaded dataset file into the preallocated arrays in `out`."""
-    import ocbench
-
-    offsets, observation_offsets = ocbench.get_episode_offsets(data)
-    assert np.array_equal(offsets[:-1], selection['episode_starts'])
-    starts, lengths, episode_idxs = selection['starts'], selection['lengths'], selection['episode_idxs']
-    obs_starts = observation_offsets[episode_idxs] + starts - offsets[episode_idxs]
-    transition_idxs = np.concatenate([np.arange(s, s + n) for s, n in zip(starts, lengths)])
-    observation_idxs = np.concatenate([np.arange(s, s + n + 1) for s, n in zip(obs_starts, lengths)])
-
-    n_obs, n_act = len(observation_idxs), len(transition_idxs)
-    ob_dim = data['observations'].shape[-1]
-    out['observations'][obs_pos : obs_pos + n_obs, :ob_dim] = data['observations'][observation_idxs]
-    out['observations'][obs_pos : obs_pos + n_obs, ob_dim:] = np.repeat(selection['conds'], lengths + 1, axis=0)
-    out['actions'][act_pos : act_pos + n_act] = data['actions'][transition_idxs]
-    out['terminals'][act_pos + np.cumsum(lengths) - 1] = True
-    return obs_pos + n_obs, act_pos + n_act
-
-
-def allocate(n_obs, n_act, ob_dim, action_dim):
-    return dict(
-        observations=np.empty((n_obs, ob_dim), np.float32),
-        actions=np.empty((n_act, action_dim), np.float32),
-        rewards=np.zeros(n_act, dtype=np.float32),
-        masks=np.ones(n_act, dtype=np.float32),
-        terminals=np.zeros(n_act, dtype=bool),
-        observation_interval=np.asarray(1, dtype=np.int32),
-    )
-
-
-def load_metadata(path):
-    with open(path.removesuffix('.npz') + '-metadata.pkl', 'rb') as f:
-        return pickle.load(f)['episodes']
-
-
-def load_segment_file(path, spec, flat, ob_dim, action_dim):
-    """Load the training segments of a single dataset file (used for the validation set)."""
-    import ocbench
-
-    selection = select_segments(load_metadata(path), spec, flat)
-    out = allocate(*num_rows(selection), ob_dim, action_dim)
-    fill_segments(ocbench.load_dataset([path]), selection, out, 0, 0)
-    return out
 
 
 def load_segment_shards(env_name, dataset_root, num_shards, spec, flat, ob_dim, action_dim, delete_shards):
@@ -233,10 +164,20 @@ def main(_):
         agent = restore_agent(agent, save_dir, FLAGS.restore_step)
     else:
         # Load segment datasets.
-        train_dataset, raw_actions, val_paths = load_segment_shards(
-            env_name, FLAGS.dataset_root, FLAGS.num_shards, spec, FLAGS.flat, ob_dim, action_dim, FLAGS.delete_shards
-        )
-        val_dataset = load_segment_file(val_paths[0], spec, FLAGS.flat, ob_dim, action_dim)
+        if FLAGS.dataset_path:
+            # Local demonstrations (e.g. from demo_variants.py): train on the first `max_episodes`, no separate
+            # validation file, normalizer fit on the training actions.
+            train_dataset = load_segment_file(
+                FLAGS.dataset_path, spec, FLAGS.flat, ob_dim, action_dim, FLAGS.max_episodes
+            )
+            val_dataset = dict(train_dataset)  # Separate dict: actions are normalized per dataset below.
+            raw_actions = train_dataset['actions']
+        else:
+            train_dataset, raw_actions, val_paths = load_segment_shards(
+                env_name, FLAGS.dataset_root, FLAGS.num_shards, spec, FLAGS.flat, ob_dim, action_dim,
+                FLAGS.delete_shards,
+            )
+            val_dataset = load_segment_file(val_paths[0], spec, FLAGS.flat, ob_dim, action_dim)
 
         # Fit on the first shard's training actions (all of them, before filtering successful segments).
         action_normalizer = ActionNormalizer.fit(raw_actions, FLAGS.action_norm_percentile, FLAGS.action_norm_clip)
