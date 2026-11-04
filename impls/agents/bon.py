@@ -29,6 +29,16 @@ class QNetwork(nn.Module):
         return MLP((*self.hidden_dims, 1), activate_final=False, layer_norm=True)(x).squeeze(-1)
 
 
+class TruncatedPrior(flax.struct.PyTreeNode):
+    """A prior that executes only the first `exec_dim` entries of its flattened action chunk (receding horizon)."""
+
+    prior: Any
+    exec_dim: int = nonpytree_field()
+
+    def sample_actions(self, observations, seed=None):
+        return self.prior.sample_actions(observations, seed=seed)[..., : self.exec_dim]
+
+
 class BoNAgent(flax.struct.PyTreeNode):
     rng: Any
     critic: Any
