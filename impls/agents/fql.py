@@ -91,7 +91,7 @@ class FQLAgent(flax.struct.PyTreeNode):
             grad_alpha = jnp.minimum(self.network.select('alpha')(params=grad_params), max_alpha)
             target_distill_loss_info = jnp.asarray(target_distill_loss, dtype=distill_loss.dtype)
             alpha_loss = grad_alpha * (target_distill_loss_info - jax.lax.stop_gradient(distill_loss))
-        actor_loss = bc_flow_loss + alpha * distill_loss + q_loss
+        actor_loss = self.config['bc_flow_weight'] * bc_flow_loss + alpha * distill_loss + self.config['q_weight'] * q_loss
         total_loss = actor_loss + alpha_loss
 
         # Additional metrics for logging.
@@ -296,6 +296,8 @@ def get_config():
             flow_steps=10,  # Number of flow steps.
             betas=(1.0, 1.5),  # Beta parameters for time sampling.
             normalize_q_loss=False,  # Whether to normalize the Q loss.
+            bc_flow_weight=1.0,  # Weight of the BC flow loss (0 keeps a pretrained BC flow fixed).
+            q_weight=1.0,  # Weight of the Q loss (0 distills the BC flow into the one-step policy only).
             encoder=ml_collections.config_dict.placeholder(str),  # Visual encoder name (None, 'impala_small', etc.).
         )
     )

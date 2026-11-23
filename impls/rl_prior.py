@@ -10,6 +10,16 @@ of the prior's demonstrations and online data. `--method` picks how the policy u
 - `td3bc` (agents/td3bc.py, deterministic BC prior): fine-tune the prior network itself with TD3+BC (`--bc_weight`),
   after a critic warmup on the demonstrations and `--actor_freeze_steps` of online data with the actor frozen.
   `--q_weight=0 --awr_temp=T` gives AWR instead.
+- `fql` (agents/fql.py, flow BC prior): FQL (Park et al., 2025) online from the BC prior instead of from offline
+  RL: the prior's flow network becomes FQL's BC flow, and `--warmup_updates` distill it into the one-step policy (no Q
+  term, BC flow fixed) while warming up the critic on the demonstrations; then standard FQL runs online. FQL uses the
+  sparse reward (1 on success), `--fql_n_step` TD over chunks and a per-step `--discount` of 0.9999 by default.
+- `rql` (agents/rql.py, flow BC prior): Reversal Q-learning online from the BC prior: the prior's flow network is the
+  actor (so training starts at the prior), critics score flow states, and the BC term (`--alpha`) uses the
+  demonstration rows only unless `--rql_bc_all`. Sparse reward and `--fql_n_step` TD over chunks, as for `fql`.
+- `expo` (agents/expo.py, frozen prior): EXPO: a tanh-Gaussian edit policy (bound `--edit_scale`) on the prior's
+  chunks, and the highest-Q of `--num_samples` prior samples and their edits is executed and bootstrapped. Sparse reward
+  and `--fql_n_step` TD over chunks, as for `fql`.
 `--self_imitation` appends every successful online episode to the demonstration set (whose half of each batch the
 BC term regresses onto), so with `--method=td3bc --q_weight=0` the policy is iterated success-filtered BC.
 
@@ -36,7 +46,18 @@ flags.DEFINE_string('env_name', 'block-single-task1-v0', 'Environment name.')
 flags.DEFINE_string('prior_dir', '', 'Directory of the flow BC prior (params, action_normalizer.npz, flags.json).')
 flags.DEFINE_integer('prior_step', 200000, 'Prior checkpoint step.')
 flags.DEFINE_string('save_dir', '../exp/rl_prior', 'Save directory.')
-flags.DEFINE_enum('method', 'bon', ['bon', 'residual', 'rlpd', 'td3bc'], 'Fine-tuning method.')
+flags.DEFINE_enum('method', 'bon', ['bon', 'residual', 'rlpd', 'td3bc', 'fql', 'rql', 'expo'], 'Fine-tuning method.')
+flags.DEFINE_integer('fql_n_step', 200, 'TD steps (fql, rql; a multiple of the chunk length).')
+flags.DEFINE_float('alpha', 10.0, 'Distillation coefficient (fql) or BC flow-matching weight (rql).')
+flags.DEFINE_float('expectile', 0.9, 'Critic expectile (rql).')
+flags.DEFINE_float('rho', 0.5, 'Pessimism: target value is the ensemble mean minus rho times its std (rql).')
+flags.DEFINE_float('v_max', 1.0, 'Upper clip of the TD target (rql; returns of the sparse reward are at most 1; 0: off).')
+flags.DEFINE_float('edit_scale', 0.1, 'Bound of the edit in normalized action units (expo).')
+flags.DEFINE_bool('truncation_terminal', False, 'Treat the time limit as a terminal failure (no bootstrapping) in online '
+                  'data, so failed episodes carry value 0.')
+flags.DEFINE_bool('rql_bc_all', False, 'Apply the BC flow-matching loss to the whole batch, not just the demos (rql).')
+flags.DEFINE_float('fql_bc_flow_weight', 1.0, 'Weight of the BC flow loss online (fql; 0 keeps the prior fixed).')
+flags.DEFINE_string('value_dims', '1024,1024,1024,1024', 'Critic hidden dims (fql).')
 flags.DEFINE_string('run_name', '', 'Run name (default: prior name and method).')
 flags.DEFINE_integer('num_samples', 32, 'N: prior samples per state (1: run the prior itself, no training).')
 flags.DEFINE_integer('online_env_steps', 500000, 'Online interaction budget in control steps.')
@@ -69,6 +90,7 @@ flags.DEFINE_float('residual_reg', 0.03, 'L2 penalty on the residual (in units o
 
 
 def main(_):
+    import flax
     import gymnasium
     import jax
     import ocbench  # noqa: F401
@@ -84,6 +106,8 @@ def main(_):
     from utils.flax_utils import restore_agent
     from utils.log_utils import CsvLogger, get_flag_dict
 
+    if FLAGS.method in ('fql', 'rql', 'expo') and not FLAGS['discount'].present:
+        FLAGS.discount = 0.9999
     random.seed(FLAGS.seed)
     np.random.seed(FLAGS.seed)
     method_tag = f'bon{FLAGS.num_samples}' if FLAGS.method == 'bon' else f'res{FLAGS.residual_scale:g}'
@@ -127,7 +151,12 @@ def main(_):
     demos['actions'] = action_normalizer.normalize(demos['actions'])
     # Every demonstration is a successful episode that terminates on its last step (the segment loader does not keep
     # rewards or masks).
-    demos['rewards'] = FLAGS.step_penalty * (demos['terminals'].astype(np.float32) - 1.0)
+    sparse = FLAGS.method in ('fql', 'rql', 'expo')
+    demos['rewards'] = (
+        demos['terminals'].astype(np.float32)
+        if sparse
+        else FLAGS.step_penalty * (demos['terminals'].astype(np.float32) - 1.0)
+    )
     demos['masks'] = 1.0 - demos['terminals'].astype(np.float32)
     demo_dataset = Dataset.create(**demos)
 
@@ -160,18 +189,30 @@ def main(_):
             fields['observations'].append(obs.astype(np.float32))
             fields['actions'].append(acts)
             fields['terminals'].append(terminals)
-            fields['rewards'].append(FLAGS.step_penalty * (terminals.astype(np.float32) - 1.0))
+            fields['rewards'].append(
+                terminals.astype(np.float32) if sparse else FLAGS.step_penalty * (terminals.astype(np.float32) - 1.0)
+            )
             fields['masks'].append(1.0 - terminals.astype(np.float32))
         out = {k: np.concatenate(v) for k, v in fields.items()}
         out['observation_interval'] = base['observation_interval']
         return out
 
+    class TruncationAsTermination(gymnasium.Wrapper):
+        def step(self, action):
+            ob, reward, terminated, truncated, info = self.env.step(action)
+            return ob, reward, terminated or truncated, False, info
+
     online_envs = [
-        wrap_env(ShapedReward(gymnasium.make(env_name)), action_normalizer=action_normalizer)
+        wrap_env(
+            gymnasium.make(env_name) if sparse else ShapedReward(gymnasium.make(env_name)),
+            action_normalizer=action_normalizer,
+        )
         for _ in range(FLAGS.collection_episodes)
     ]
     if FLAGS.self_imitation:
         online_envs = [SuccessRecorder(env) for env in online_envs]
+    if FLAGS.truncation_terminal:
+        online_envs = [TruncationAsTermination(env) for env in online_envs]
     example = dict(
         observations=np.zeros(ob_dim, np.float32),
         actions=np.zeros(action_dim, np.float32),
@@ -182,9 +223,10 @@ def main(_):
     )
     replay_buffer = ReplayBuffer.create(example, size=FLAGS.online_env_steps + FLAGS.collection_episodes * max_episode_steps)
     exec_len = FLAGS.exec_len or chunk_len
+    n_step = FLAGS.fql_n_step if FLAGS.method in ('fql', 'rql', 'expo') else exec_len
     for dataset in (demo_dataset, replay_buffer):
         dataset.action_chunk_length = exec_len
-        dataset.n_step = exec_len
+        dataset.n_step = n_step
         dataset.discount = FLAGS.discount
 
     act_low = np.tile(action_normalizer.action_low, exec_len).astype(np.float32)
@@ -192,7 +234,7 @@ def main(_):
     bc_prior = prior
     prior = TruncatedPrior(prior, exec_len * action_dim)
     ex_act = np.zeros((1, exec_len * action_dim), np.float32)
-    num_qs = FLAGS.num_qs or (10 if FLAGS.method in ('rlpd', 'td3bc') else 2)
+    num_qs = FLAGS.num_qs or (10 if FLAGS.method in ('rlpd', 'td3bc', 'expo') else 2)
     critic_config = dict(num_qs=num_qs, critic_hidden_dims=(512, 512, 512, 512), lr=3e-4, tau=0.005)
     if FLAGS.method == 'bon':
         agent = BoNAgent.create(
@@ -214,6 +256,49 @@ def main(_):
                 target_noise_clip=0.3,
                 num_demo=FLAGS.batch_size - int(FLAGS.batch_size * FLAGS.online_ratio),
                 **critic_config,
+            ),
+        )
+    elif FLAGS.method == 'fql':
+        from agents.fql import get_config as fql_config
+
+        assert prior_config['agent_name'] == 'fbc', 'fql needs a flow BC prior.'
+        fql_cfg = fql_config()
+        fql_cfg.update(
+            actor_hidden_dims=tuple(prior_config['actor_hidden_dims']),
+            actor_layer_norm=prior_config['actor_layer_norm'],
+            mlp_class=prior_config['mlp_class'],
+            flow_steps=prior_config['flow_steps'],
+            betas=tuple(prior_config['betas']),
+            value_hidden_dims=tuple(int(d) for d in FLAGS.value_dims.split(',')),
+            alpha=FLAGS.alpha,
+            batch_size=FLAGS.batch_size,
+            bc_flow_weight=0.0,
+            q_weight=0.0,
+        )
+        agent = agents['fql'].create(FLAGS.seed, ex_obs, ex_act, dict(fql_cfg))
+        agent.network.params['modules_actor_bc_flow'] = bc_prior.network.params['modules_actor_flow']
+    elif FLAGS.method == 'expo':
+        from agents.expo import EXPOAgent
+
+        actor_dims = tuple(int(d) for d in FLAGS.actor_dims.split(','))
+        agent = EXPOAgent.create(
+            FLAGS.seed, prior, ex_obs, ex_act, act_low, act_high,
+            dict(
+                num_samples=FLAGS.num_samples, edit_scale=FLAGS.edit_scale, actor_hidden_dims=actor_dims,
+                num_min_qs=2, q_max=FLAGS.v_max, init_alpha=0.01, **critic_config,
+            ),
+        )
+    elif FLAGS.method == 'rql':
+        from agents.rql import RQLAgent
+
+        assert prior_config['agent_name'] == 'fbc', 'rql needs a flow BC prior.'
+        agent = RQLAgent.create(
+            FLAGS.seed, bc_prior, ex_obs, ex_act,
+            dict(
+                num_qs=FLAGS.num_qs or 10, value_hidden_dims=tuple(int(d) for d in FLAGS.value_dims.split(',')),
+                flow_steps=prior_config['flow_steps'], alpha=FLAGS.alpha, expectile=FLAGS.expectile, rho=FLAGS.rho,
+                lr=3e-4, tau=0.005, ema=0.999, v_max=FLAGS.v_max,
+                num_bc=0 if FLAGS.rql_bc_all else FLAGS.batch_size - int(FLAGS.batch_size * FLAGS.online_ratio),
             ),
         )
     elif FLAGS.method == 'rlpd':
@@ -244,6 +329,8 @@ def main(_):
     def evaluate(num_episodes):
         def sample_fn(obs):
             eval_rng[0], key = jax.random.split(eval_rng[0])
+            if FLAGS.method == 'fql':
+                return agent.sample_actions(obs, seed=key)
             if FLAGS.method != 'bon':
                 return agent.sample_actions(obs, key, explore=False)
             return agent.sample_actions(obs, key)
@@ -278,6 +365,9 @@ def main(_):
                     agent, info = agent.bc_update_many(batches)
                 else:
                     agent, info = agent.update_many(batches)
+        elif FLAGS.method in ('fql', 'rql', 'expo'):
+            for _ in range(num_updates):
+                agent, info = agent.update(sample_batch(online))
         else:
             for _ in range(num_updates):
                 batch = sample_batch(online)
@@ -299,6 +389,12 @@ def main(_):
         row.update(train(FLAGS.warmup_updates, online=False, actor_on=0.0))
     elif trains:
         row.update(train(FLAGS.warmup_updates, online=False))
+    if FLAGS.method == 'fql':
+        # Warmup done (distillation and critic only; the step-0 evaluation below is this BC start); standard FQL from
+        # here on.
+        agent = agent.replace(
+            config=flax.core.FrozenDict({**agent.config, 'q_weight': 1.0, 'bc_flow_weight': FLAGS.fql_bc_flow_weight})
+        )
     row.update({f'eval/{k}': v for k, v in evaluate(FLAGS.eval_episodes).items()})
     log(0, row)
 
@@ -313,7 +409,7 @@ def main(_):
         if FLAGS.self_imitation and successes:
             demo_dataset = Dataset.create(**with_successes(demos, successes))
             demo_dataset.action_chunk_length = exec_len
-            demo_dataset.n_step = exec_len
+            demo_dataset.n_step = n_step
             demo_dataset.discount = FLAGS.discount
             row['demos/episodes'] = len(demo_dataset.initial_locs)
         if trains:

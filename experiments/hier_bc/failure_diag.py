@@ -25,6 +25,7 @@ flags.DEFINE_string('env_name', 'block-single-task1-v0', 'Environment name.')
 flags.DEFINE_integer('num_episodes', 200, 'Episodes.')
 flags.DEFINE_integer('num_envs', 50, 'Environments stepped in lockstep.')
 flags.DEFINE_string('out', '', 'Output JSON (default: prior_dir/failure_diag.json).')
+flags.DEFINE_integer('max_episode_steps', 0, 'Episode time limit (0: the environment default).')
 
 LIFT_HEIGHT = 0.045  # Block center above this (resting ~0.02-0.03) counts as lifted.
 NEAR_TARGET = 0.04  # Horizontal distance to the target counted as "near".
@@ -50,7 +51,8 @@ def main(_):
     norm = np.load(os.path.join(FLAGS.prior_dir, 'action_normalizer.npz'))
     normalizer = ActionNormalizer(norm['q_low'], norm['q_high'], float(norm['clip']), norm['gripper_dims'])
     env_name = cpu_env_name(FLAGS.env_name)
-    envs = [wrap_env(gymnasium.make(env_name), action_normalizer=normalizer) for _ in range(FLAGS.num_envs)]
+    make_kwargs = dict(max_episode_steps=FLAGS.max_episode_steps) if FLAGS.max_episode_steps else {}
+    envs = [wrap_env(gymnasium.make(env_name, **make_kwargs), action_normalizer=normalizer) for _ in range(FLAGS.num_envs)]
     ob_dim = envs[0].observation_space.shape[-1]
     action_dim = envs[0].action_space.shape[-1]
     max_steps = envs[0].spec.max_episode_steps or 1250

@@ -200,7 +200,8 @@ def main(_):
             f'Train transitions: {train_dataset.size}, epoch = {train_dataset.size / config["batch_size"]:.0f} steps',
             flush=True,
         )
-        example_batch = train_dataset.sample(1, **sample_kwargs)
+        # A large example batch: agents that standardize observations (csfbc) take their statistics from it.
+        example_batch = train_dataset.sample(4096, **sample_kwargs)
         agent = agent_class.create(FLAGS.seed, example_batch['observations'], example_batch['actions'], config)
 
     normalizer_args = dict(
