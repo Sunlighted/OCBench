@@ -27,6 +27,8 @@ def env_family(env_name):
 
 def cpu_env_name(env_name):
     family = env_family(env_name)
+    if env_name.startswith(f'{family}-cpu-'):
+        return env_name
     return env_name.replace(f'{family}-', f'{family}-cpu-', 1)
 
 
